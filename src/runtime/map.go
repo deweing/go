@@ -1194,14 +1194,21 @@ func bucketEvacuated(t *maptype, h *hmap, bucket uintptr) bool {
 
 // evacDst is an evacuation destination.
 type evacDst struct {
-	b *bmap          // current destination bucket
-	i int            // key/elem index into b
+	// 桶位置
+	b *bmap // current destination bucket
+	// 位置序号
+	i int // key/elem index into b
+	// key地址
 	k unsafe.Pointer // pointer to current key storage
+	// value地址
 	e unsafe.Pointer // pointer to current elem storage
 }
 
+// map扩容
 func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
+	// 获取老的桶
 	b := (*bmap)(add(h.oldbuckets, oldbucket*uintptr(t.bucketsize)))
+	// 增长之前的桶的数量
 	newbit := h.noldbuckets()
 	if !evacuated(b) {
 		// TODO: reuse overflow buckets instead of using new ones, if there
@@ -1214,6 +1221,7 @@ func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
 		x.k = add(unsafe.Pointer(x.b), dataOffset)
 		x.e = add(x.k, bucketCnt*uintptr(t.keysize))
 
+		// 不是等量扩容，使用Y来搬迁
 		if !h.sameSizeGrow() {
 			// Only calculate y pointers if we're growing bigger.
 			// Otherwise GC can see bad pointers.
@@ -1223,27 +1231,39 @@ func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
 			y.e = add(y.k, bucketCnt*uintptr(t.keysize))
 		}
 
+		// 遍历bucket，包括overflow buckets
+		// b老的bucket地址
 		for ; b != nil; b = b.overflow(t) {
 			k := add(unsafe.Pointer(b), dataOffset)
 			e := add(k, bucketCnt*uintptr(t.keysize))
+			//遍历bucket中的所有cell
 			for i := 0; i < bucketCnt; i, k, e = i+1, add(k, uintptr(t.keysize)), add(e, uintptr(t.elemsize)) {
 				top := b.tophash[i]
+				// 如果cell为空
 				if isEmpty(top) {
+					//那就标记为“搬迁”过
 					b.tophash[i] = evacuatedEmpty
+					//继续下一个cell
 					continue
 				}
 				if top < minTopHash {
 					throw("bad map state")
 				}
 				k2 := k
+				// 如果是指针，则解引用
 				if t.indirectkey() {
 					k2 = *((*unsafe.Pointer)(k2))
 				}
+				// 判断使用那一部分来搬迁
+				// 等量扩容直接使用X部分
 				var useY uint8
 				if !h.sameSizeGrow() {
 					// Compute hash to make our evacuation decision (whether we need
 					// to send this key/elem to bucket x or bucket y).
 					hash := t.hasher(k2, uintptr(h.hash0))
+					// 有协程正在遍历map
+					// 如果出现相同的key，算出来的hash值不同
+					// 只有在float变量的NaN()情况下会出现
 					if h.flags&iterator != 0 && !t.reflexivekey() && !t.key.equal(k2, k2) {
 						// If key != key (NaNs), then the hash could be (and probably
 						// will be) entirely different from the old hash. Moreover,
@@ -1256,9 +1276,11 @@ func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
 						// We recompute a new random tophash for the next level so
 						// these keys will get evenly distributed across all buckets
 						// after multiple grows.
-						useY = top & 1
+						useY = top & 1 //由tophash最低位决定
 						top = tophash(hash)
 					} else {
+						// 正常情况下
+						// 取决于新hash值的 oldB + 1 位是0还是1
 						if hash&newbit != 0 {
 							useY = 1
 						}
@@ -1269,26 +1291,32 @@ func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
 					throw("bad evacuatedN")
 				}
 
+				// 在老的桶标记迁移到X还是Y
 				b.tophash[i] = evacuatedX + useY // evacuatedX + 1 == evacuatedY
 				dst := &xy[useY]                 // evacuation destination
 
-				if dst.i == bucketCnt {
-					dst.b = h.newoverflow(t, dst.b)
+				if dst.i == bucketCnt { // i==8, 说明要溢出了
+					dst.b = h.newoverflow(t, dst.b) //新建一个桶
 					dst.i = 0
 					dst.k = add(unsafe.Pointer(dst.b), dataOffset)
 					dst.e = add(dst.k, bucketCnt*uintptr(t.keysize))
 				}
+				// 设置top hash
 				dst.b.tophash[dst.i&(bucketCnt-1)] = top // mask dst.i as an optimization, to avoid a bounds check
 				if t.indirectkey() {
+					// 复制key(指针)到新的位置
 					*(*unsafe.Pointer)(dst.k) = k2 // copy pointer
 				} else {
+					// 复制key(值)到新位置
 					typedmemmove(t.key, dst.k, k) // copy elem
 				}
+				// 复制value
 				if t.indirectelem() {
 					*(*unsafe.Pointer)(dst.e) = *(*unsafe.Pointer)(e)
 				} else {
 					typedmemmove(t.elem, dst.e, e)
 				}
+				// 定位到下一个cell
 				dst.i++
 				// These updates might push these pointers past the end of the
 				// key or elem arrays.  That's ok, as we have the overflow pointer
@@ -1299,6 +1327,8 @@ func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
 			}
 		}
 		// Unlink the overflow buckets & clear key/elem to help GC.
+		// 如果没有协程在使用老的buckets, 就把老buckets清除掉，帮助GC
+		// 只清除Key/Value，保留top hash部分，表示搬迁状态
 		if h.flags&oldIterator == 0 && t.bucket.ptrdata != 0 {
 			b := add(h.oldbuckets, oldbucket*uintptr(t.bucketsize))
 			// Preserve b.tophash because the evacuation
@@ -1309,6 +1339,7 @@ func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
 		}
 	}
 
+	// 更新搬迁进度
 	if oldbucket == h.nevacuate {
 		advanceEvacuationMark(h, t, newbit)
 	}
