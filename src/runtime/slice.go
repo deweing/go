@@ -179,15 +179,19 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 
 	newcap := oldCap
 	doublecap := newcap + newcap
+	// newLen = 旧的slice长度+新加入的数量
+	// 当newLen>原来的2倍容量，则新的容量 = newLen
 	if newLen > doublecap {
 		newcap = newLen
 	} else {
 		const threshold = 256
+		// 当原cap小于256时， 新的cap等于原来的2倍
 		if oldCap < threshold {
 			newcap = doublecap
 		} else {
 			// Check 0 < newcap to detect overflow
 			// and prevent an infinite loop.
+			// 当原cap>=256时，slice的容量增长变成 newcap = oldcap + (oldcap+3*256)/4
 			for 0 < newcap && newcap < newLen {
 				// Transition from growing 2x for small slices
 				// to growing 1.25x for large slices. This formula
