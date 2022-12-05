@@ -185,20 +185,33 @@ type bmap struct {
 // If you modify hiter, also change cmd/compile/internal/reflectdata/reflect.go
 // and reflect/value.go to match the layout of this structure.
 type hiter struct {
-	key         unsafe.Pointer // Must be in first position.  Write nil to indicate iteration end (see cmd/compile/internal/walk/range.go).
-	elem        unsafe.Pointer // Must be in second position (see cmd/compile/internal/walk/range.go).
-	t           *maptype
-	h           *hmap
-	buckets     unsafe.Pointer // bucket ptr at hash_iter initialization time
-	bptr        *bmap          // current bucket
-	overflow    *[]*bmap       // keeps overflow buckets of hmap.buckets alive
-	oldoverflow *[]*bmap       // keeps overflow buckets of hmap.oldbuckets alive
-	startBucket uintptr        // bucket iteration started at
-	offset      uint8          // intra-bucket offset to start from during iteration (should be big enough to hold bucketCnt-1)
-	wrapped     bool           // already wrapped around from end of bucket array to beginning
-	B           uint8
-	i           uint8
-	bucket      uintptr
+	// Key指针
+	key unsafe.Pointer // Must be in first position.  Write nil to indicate iteration end (see cmd/compile/internal/walk/range.go).
+	// value指针
+	elem unsafe.Pointer // Must be in second position (see cmd/compile/internal/walk/range.go).
+	// map类型，包含 key size 大小等
+	t *maptype
+	// map header
+	h *hmap
+	// 初始化时指向的bucket
+	buckets unsafe.Pointer // bucket ptr at hash_iter initialization time
+	// 当前遍历的bmap
+	bptr        *bmap    // current bucket
+	overflow    *[]*bmap // keeps overflow buckets of hmap.buckets alive
+	oldoverflow *[]*bmap // keeps overflow buckets of hmap.oldbuckets alive
+	// 起始遍历的bucket编号
+	startBucket uintptr // bucket iteration started at
+	// 起始遍历的cell编号
+	offset uint8 // intra-bucket offset to start from during iteration (should be big enough to hold bucketCnt-1)
+	//是否从头遍历
+	wrapped bool // already wrapped around from end of bucket array to beginning
+	// B的大小
+	B uint8
+	// 当前的cell序号
+	i uint8
+	// 当前遍历的bucket
+	bucket uintptr
+	// 因为扩容，需要检查的bucket
 	checkBucket uintptr
 }
 
@@ -859,6 +872,7 @@ search:
 // The hiter struct pointed to by 'it' is allocated on the stack
 // by the compilers order pass or on the heap by reflect_mapiterinit.
 // Both need to have zeroed hiter since the struct contains pointers.
+// 初始化map迭代器
 func mapiterinit(t *maptype, h *hmap, it *hiter) {
 	if raceenabled && h != nil {
 		callerpc := getcallerpc()
@@ -889,13 +903,17 @@ func mapiterinit(t *maptype, h *hmap, it *hiter) {
 	}
 
 	// decide where to start
+	// 生成随机数r
 	var r uintptr
 	if h.B > 31-bucketCntBits {
 		r = uintptr(fastrand64())
 	} else {
 		r = uintptr(fastrand())
 	}
+
+	// 通过随机数决定从哪个bucket开始遍历
 	it.startBucket = r & bucketMask(h.B)
+	// 从buket的那个cell开始遍历
 	it.offset = uint8(r >> h.B & (bucketCnt - 1))
 
 	// iterator state

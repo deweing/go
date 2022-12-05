@@ -31,16 +31,27 @@ const (
 )
 
 type hchan struct {
-	qcount   uint           // total data in the queue
-	dataqsiz uint           // size of the circular queue
-	buf      unsafe.Pointer // points to an array of dataqsiz elements
+	// channel里面的元素数量
+	qcount uint // total data in the queue
+	// channel底层循环数组的长度
+	dataqsiz uint // size of the circular queue
+	// 指向底层循环数组的指针
+	// 只针对有缓冲的channel
+	buf unsafe.Pointer // points to an array of dataqsiz elements
+	// channel中的元素大小，缓冲队列
 	elemsize uint16
-	closed   uint32
+	// channel是否被关闭
+	closed uint32
+	// channel中的元素类型
 	elemtype *_type // element type
-	sendx    uint   // send index
-	recvx    uint   // receive index
-	recvq    waitq  // list of recv waiters
-	sendq    waitq  // list of send waiters
+	// 已发送元素在循环数组中的索引
+	sendx uint // send index
+	// 已结束元素在循环数组中的索引
+	recvx uint // receive index
+	// 等待接收的 groutine 队列（双向链表）
+	recvq waitq // list of recv waiters
+	// 等待发送的 groutine 队列（双向链表）
+	sendq waitq // list of send waiters
 
 	// lock protects all fields in hchan, as well as several
 	// fields in sudogs blocked on this channel.
@@ -48,11 +59,13 @@ type hchan struct {
 	// Do not change another G's status while holding this lock
 	// (in particular, do not ready a G), as this can deadlock
 	// with stack shrinking.
+	// 保护 hchan 中的所有字段
 	lock mutex
 }
 
+// 双向链表
 type waitq struct {
-	first *sudog
+	first *sudog //sudog 对goroutine的一个封装
 	last  *sudog
 }
 
@@ -109,6 +122,7 @@ func makechan(t *chantype, size int) *hchan {
 
 	c.elemsize = uint16(elem.size)
 	c.elemtype = elem
+	// 底层循环数组长度
 	c.dataqsiz = uint(size)
 	lockInit(&c.lock, lockRankHchan)
 
@@ -158,10 +172,13 @@ func chansend1(c *hchan, elem unsafe.Pointer) {
  * the operation; we'll see that it's now closed.
  */
 func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
+	// 如果channel是nil
 	if c == nil {
+		// 不能阻塞，直接返回false，表示发送未成功
 		if !block {
 			return false
 		}
+		// 当前 goroutine 被挂起
 		gopark(nil, nil, waitReasonChanSendNilChan, traceEvGoStop, 2)
 		throw("unreachable")
 	}
@@ -190,6 +207,9 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	// channel wasn't closed during the first observation. However, nothing here
 	// guarantees forward progress. We rely on the side effects of lock release in
 	// chanrecv() and closechan() to update this thread's view of c.closed and full().
+	//
+	// 快速检查：对不阻塞send，快速检查失败的场景
+	// 不能阻塞、并且队列已满
 	if !block && c.closed == 0 && full(c) {
 		return false
 	}
@@ -199,13 +219,17 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		t0 = cputicks()
 	}
 
+	// 锁住channel，并发安全
 	lock(&c.lock)
 
+	// 如果chanel已经关闭
 	if c.closed != 0 {
-		unlock(&c.lock)
+		unlock(&c.lock) //解锁
+		// 直接panic
 		panic(plainError("send on closed channel"))
 	}
 
+	// 如果接受队列里面有 goroutine，直接将要发送的数据拷贝到接收的goroutine
 	if sg := c.recvq.dequeue(); sg != nil {
 		// Found a waiting receiver. We pass the value we want to send
 		// directly to the receiver, bypassing the channel buffer (if any).
@@ -213,28 +237,41 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		return true
 	}
 
+	// 对于缓冲队列，如果过还有缓冲的空间
 	if c.qcount < c.dataqsiz {
 		// Space is available in the channel buffer. Enqueue the element to send.
+		// qp 指向循环队列c.buf的 sendx 位置
 		qp := chanbuf(c, c.sendx)
 		if raceenabled {
 			racenotify(c, c.sendx, nil)
 		}
+		// 将数据从ep拷贝到qp
 		typedmemmove(c.elemtype, qp, ep)
+		// 发送游标+1
 		c.sendx++
+		// 如果发生游标值等于容量，游标值归0
 		if c.sendx == c.dataqsiz {
 			c.sendx = 0
 		}
+		// 缓冲区的元素数量加1
 		c.qcount++
+		//解锁
 		unlock(&c.lock)
+		//发送成功
 		return true
 	}
 
+	// 如果不需要阻塞，直接返回失败
 	if !block {
 		unlock(&c.lock)
 		return false
 	}
 
 	// Block on the channel. Some receiver will complete our operation for us.
+	//
+	// channel满了，发送方会被阻塞，接下来会构造一个sudog
+
+	// 获取当前的gorotiune指针
 	gp := getg()
 	mysg := acquireSudog()
 	mysg.releasetime = 0
@@ -250,11 +287,14 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	mysg.c = c
 	gp.waiting = mysg
 	gp.param = nil
+	//当前的 goroutine 加入发送等待队列
 	c.sendq.enqueue(mysg)
 	// Signal to anyone trying to shrink our stack that we're about
 	// to park on a channel. The window between when this G's status
 	// changes and when we set gp.activeStackChans is not safe for
 	// stack shrinking.
+	//
+	// 当前goroutine设置为等待状态并解锁，进入休眠等待被唤醒
 	gp.parkingOnChan.Store(true)
 	gopark(chanparkcommit, unsafe.Pointer(&c.lock), waitReasonChanSend, traceEvGoBlockSend, 2)
 	// Ensure the value being sent is kept alive until the
@@ -264,9 +304,11 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	KeepAlive(ep)
 
 	// someone woke us up.
+	// 从这里开始被唤醒了 （channel 有机会可以发送了）
 	if mysg != gp.waiting {
 		throw("G waiting list is corrupted")
 	}
+	// 被唤醒之后执行清理工作并释放sudog结构体
 	gp.waiting = nil
 	gp.activeStackChans = false
 	closed := !mysg.success
@@ -280,6 +322,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		if c.closed == 0 {
 			throw("chansend: spurious wakeup")
 		}
+		// 被唤醒后，channel关闭了，直接panic
 		panic(plainError("send on closed channel"))
 	}
 	return true
