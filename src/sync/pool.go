@@ -46,25 +46,48 @@ import (
 // a call to Get returning that same value x.
 // Similarly, a call to New returning x “synchronizes before”
 // a call to Get returning that same value x.
+//
+// Pool使用总结
+// 1.Pool本质是为了提高临时对象的复用率；
+// 2.Pool使用两层回收策略（local+victim）避免性能波动；
+// 3.Pool本质是一个杂货铺属性，啥都可以放。把什么东西放进去，预期从里面拿出什么类型的东西都需要业务方使用把控，Pool池本身不做限制；
+// 4.Pool池里面cache对象也是分层的，一层层的cache，取用方式从最热的数据到最冷的数据投递；
+// 5.Pool是并发安全的，但是内部是无锁结构，原理是对每个P都分配cache数组(poolLocalInternal数组)，这样cache结构就不会导致并发；
+// 6.永远不要copy一个Pool，明确禁止，不然会导致内存泄露和程序并发逻辑错误；
+// 7.代码编译之前用 go vet 做静态检查，能减少非常多的问题
+// 8.每轮GC开始都会清理一把Pool里面cache的对象，注意流程是分两步，当前Pool池local数组里的元素交给victim数组句柄，victim里面cache的元素全部清理。换句话说，引入 victim 机制之后，对象的缓存时间变成两个GC周期；
+// 9.不能对Pool.Get出来的对象做预判, 有可能是新的（新分配的），有可能是旧的（之前人用过，然后Put进去的）
+// 10.当用完一个从pool取出来的实例后，一定要记得调用Put，否则pool无法复用这个实例，通常用defer完成；
+// 11.不能对pool池里面的元素个数做假定，你不能够
 type Pool struct {
+	// 通过vet检查保证不能被复制
 	noCopy noCopy
 
-	local     unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
-	localSize uintptr        // size of the local array
+	// 每个p的本地队列，实际类型为[P]poolLocal
+	local unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
+	// [P]poolLocal的大小
+	localSize uintptr // size of the local array
 
+	// GC 到时，victim 和 victimSize 会分别接管 local 和 localSize；
+	// victim 的目的是为了减少 GC 后冷启动导致的性能抖动，让分配对象更平滑
 	victim     unsafe.Pointer // local from previous cycle
 	victimSize uintptr        // size of victims array
 
 	// New optionally specifies a function to generate
 	// a value when Get would otherwise return nil.
 	// It may not be changed concurrently with calls to Get.
+	// 自定义的对象创建回调函数，当pool中无可用对象时会调用此函数
 	New func() any
 }
 
 // Local per-P Pool appendix.
+// 管理 cache 的内部结构，跟每个 P 对应，操作无需加锁
 type poolLocalInternal struct {
-	private any       // Can be used only by the respective P.
-	shared  poolChain // Local P can pushHead/popHead; any P can popTail.
+	//P的私有缓存区，使用时不需要加锁
+	private any // Can be used only by the respective P.
+	// 公共缓存区，本地P可以 pushHead/popHead，其他P则只能 popTail
+	// 双向链表
+	shared poolChain // Local P can pushHead/popHead; any P can popTail.
 }
 
 type poolLocal struct {
@@ -72,6 +95,11 @@ type poolLocal struct {
 
 	// Prevents false sharing on widespread platforms with
 	// 128 mod (cache line size) = 0 .
+	//
+	// 把 poolLocal 填充至 128 字节对齐，避免 false sharing 引起的性能问题
+	//
+	// 在大多数平台上，128 mod (cache line size) = 0 可以防止伪共享
+	// 伪共享，仅占位用，防止在cache line size 上分配多个 poolLocalInternal
 	pad [128 - unsafe.Sizeof(poolLocalInternal{})%128]byte
 }
 
@@ -92,6 +120,7 @@ func poolRaceAddr(x any) unsafe.Pointer {
 }
 
 // Put adds x to the pool.
+// Put一个元素进池子
 func (p *Pool) Put(x any) {
 	if x == nil {
 		return
@@ -104,10 +133,13 @@ func (p *Pool) Put(x any) {
 		race.ReleaseMerge(poolRaceAddr(x))
 		race.Disable()
 	}
+	// G-M 锁定
 	l, _ := p.pin()
 	if l.private == nil {
+		// 尝试放到最快的位置
 		l.private = x
 	} else {
+		// 放到双向链表中
 		l.shared.pushHead(x)
 	}
 	runtime_procUnpin()
@@ -124,22 +156,39 @@ func (p *Pool) Put(x any) {
 //
 // If Get would otherwise return nil and p.New is non-nil, Get returns
 // the result of calling p.New.
+//
+// Get 从 Pool 池里取一个元素出来，元素是层层 cache 的，由最快到最慢一层层尝试
+// 最快的是本 P 对应的列表里通过 private  字段直接取出，最慢的就是调用 New 函数现场构造。
+//
+// 尝试路径：
+// 1.当前 P 对应的 local.private 字段
+// 2.当前 P 对应的 local 的双向链表
+// 3.其他 P 对应的 local 列表
+// 4.victim cache 里的元素
+// 5.New 现场构造；
 func (p *Pool) Get() any {
 	if race.Enabled {
 		race.Disable()
 	}
+
+	// 把G锁住在当前M (声明当前 M 不能被抢占)，返回M绑定的P的ID
+	// 在当前场景，也可以认为是G绑定到P，因为这种场景P不可能被抢占，只有系统调用的时候才有P被抢占的场景
 	l, pid := p.pin()
+	// 如果能从private取出缓存的元素，那么将是最快的路径
 	x := l.private
 	l.private = nil
 	if x == nil {
 		// Try to pop the head of the local shard. We prefer
 		// the head over the tail for temporal locality of
 		// reuse.
+		// 从shared队列里获取
 		x, _ = l.shared.popHead()
 		if x == nil {
+			//尝试从其他P的队列获取，或者尝试从 victim cache 里面获取
 			x = p.getSlow(pid)
 		}
 	}
+	// G-M锁定解除
 	runtime_procUnpin()
 	if race.Enabled {
 		race.Enable()
@@ -147,9 +196,11 @@ func (p *Pool) Get() any {
 			race.Acquire(poolRaceAddr(x))
 		}
 	}
+	//最慢的路径：现场初始化，这种场景是 Pool 池里面一个对象都没有，只能初始化
 	if x == nil && p.New != nil {
 		x = p.New()
 	}
+	//返回对象
 	return x
 }
 
@@ -195,6 +246,10 @@ func (p *Pool) getSlow(pid int) any {
 // pin pins the current goroutine to P, disables preemption and
 // returns poolLocal pool for the P and the P's id.
 // Caller must call runtime_procUnpin() when done with the pool.
+//
+// pin 作用就是将当前的goroutine和P绑定在一起，禁止抢占
+// 并且返回对应的poolLocal已经P的id
+// 调用方必须在完成取值后调用 runtime_procUnpin()方法来取消抢占
 func (p *Pool) pin() (*poolLocal, int) {
 	pid := runtime_procPin()
 	// In pinSlow we store to local and then to localSize, here we load in opposite order.
@@ -209,12 +264,17 @@ func (p *Pool) pin() (*poolLocal, int) {
 	return p.pinSlow()
 }
 
+// 1.首次 Pool 需要把自己注册进 allPools 数组
+// 2.Pool.local 数组按照 runtime.GOMAXPROCS(0) 的大小进行分配，如果是默认的，那么这个就是 P 的个数，也就是 CPU 的个数
 func (p *Pool) pinSlow() (*poolLocal, int) {
 	// Retry under the mutex.
 	// Can not lock the mutex while pinned.
+	// G-M 先解锁
 	runtime_procUnpin()
+	// 以下逻辑在全局锁 allPoolsMu 内
 	allPoolsMu.Lock()
 	defer allPoolsMu.Unlock()
+	// 获取当前 G-M-P ，P 的 id
 	pid := runtime_procPin()
 	// poolCleanup won't be called while we are pinned.
 	s := p.localSize
@@ -223,10 +283,13 @@ func (p *Pool) pinSlow() (*poolLocal, int) {
 		return indexLocal(l, pid), pid
 	}
 	if p.local == nil {
+		// 首次，Pool 需要把自己注册进 allPools 数组
 		allPools = append(allPools, p)
 	}
 	// If GOMAXPROCS changes between GCs, we re-allocate the array and lose the old one.
+	// P 的个数
 	size := runtime.GOMAXPROCS(0)
+	// local 数组的大小就等于 runtime.GOMAXPROCS(0)
 	local := make([]poolLocal, size)
 	atomic.StorePointer(&p.local, unsafe.Pointer(&local[0])) // store-release
 	runtime_StoreReluintptr(&p.localSize, uintptr(size))     // store-release
@@ -241,12 +304,15 @@ func poolCleanup() {
 	// pinned section (in effect, this has all Ps pinned).
 
 	// Drop victim caches from all pools.
+	// 清理oldPools上的victim的元素
 	for _, p := range oldPools {
 		p.victim = nil
 		p.victimSize = 0
 	}
 
 	// Move primary cache to victim cache.
+	// 把local cache 迁移到 victim 上
+	// 这样就不致于让GC把所有的Pool都清空了，有victim再兜底下，这样可以防止抖动；
 	for _, p := range allPools {
 		p.victim = p.local
 		p.victimSize = p.localSize
@@ -256,6 +322,7 @@ func poolCleanup() {
 
 	// The pools with non-empty primary caches now have non-empty
 	// victim caches and no pools have primary caches.
+	// 清理 allPools
 	oldPools, allPools = allPools, nil
 }
 

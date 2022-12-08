@@ -33,20 +33,30 @@ const (
 // ../reflect/type.go:/^type.rtype.
 // ../internal/reflectlite/type.go:/^type.rtype.
 type _type struct {
-	size       uintptr
-	ptrdata    uintptr // size of memory prefix holding all pointers
-	hash       uint32
-	tflag      tflag
-	align      uint8
+	// 数据类型占用的空间大小
+	size uintptr
+	// 含有所有指针类型前缀大小
+	ptrdata uintptr // size of memory prefix holding all pointers
+	// 类型hash值，避免在哈希表中计算
+	hash uint32
+	// 类型flag，和反射相关
+	tflag tflag
+	// 该类型变量对齐方式
+	align uint8
+	// 该类型结构字段对齐方式
 	fieldAlign uint8
-	kind       uint8
+	// 类型编号 src/runtime/typeKind.go
+	kind uint8
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
 	equal func(unsafe.Pointer, unsafe.Pointer) bool
 	// gcdata stores the GC type data for the garbage collector.
 	// If the KindGCProg bit is set in kind, gcdata is a GC program.
 	// Otherwise it is a ptrmask bitmap. See mbitmap.go for details.
-	gcdata    *byte
+	//
+	// gc数据
+	gcdata *byte
+	// 类型名字的偏移
 	str       nameOff
 	ptrToThis typeOff
 }
@@ -342,17 +352,23 @@ type uncommontype struct {
 	_       uint32 // unused
 }
 
+// 接口的方法声明
 type imethod struct {
+	// 方法名
 	name nameOff
+	// 描述方法参数返回值等细节
 	ityp typeOff
 }
 
+// 非空接口类型，接口定义、包路径、方法
 type interfacetype struct {
 	typ     _type
 	pkgpath name
-	mhdr    []imethod
+	// 接口方法声明列表，按字典序排序
+	mhdr []imethod
 }
 
+// map类型
 type maptype struct {
 	typ    _type
 	key    *_type

@@ -314,14 +314,21 @@ const (
 // It is embedded in other struct types.
 //
 // rtype must be kept in sync with ../runtime/type.go:/^type._type.
+//
+// Reflect中的type定义 必须和 runtime/type.go中_type类型保持一致
 type rtype struct {
-	size       uintptr
-	ptrdata    uintptr // number of bytes in the type that can contain pointers
-	hash       uint32  // hash of type; avoids computation in hash tables
-	tflag      tflag   // extra type information flags
-	align      uint8   // alignment of variable with this type
-	fieldAlign uint8   // alignment of struct field with this type
-	kind       uint8   // enumeration for C
+	// 数据类型占用的空间大小
+	size uintptr
+	// 含有所有指针类型前缀大小
+	ptrdata uintptr // number of bytes in the type that can contain pointers
+	// 类型hash值，避免在哈希表中计算
+	hash uint32 // hash of type; avoids computation in hash tables
+	// 类型flag，和反射相关
+	tflag      tflag // extra type information flags
+	align      uint8 // alignment of variable with this type
+	fieldAlign uint8 // alignment of struct field with this type
+	// 类型编号
+	kind uint8 // enumeration for C
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
 	equal     func(unsafe.Pointer, unsafe.Pointer) bool
@@ -1436,7 +1443,9 @@ func (t *structType) FieldByName(name string) (f StructField, present bool) {
 // TypeOf returns the reflection Type that represents the dynamic type of i.
 // If i is a nil interface value, TypeOf returns nil.
 func TypeOf(i any) Type {
+	// emptyInterface结构体定义和eface一样，都是两个word(type和data)
 	eface := *(*emptyInterface)(unsafe.Pointer(&i))
+	// 将eface.typ赋给reflect.Type接口，供外部使用
 	return toType(eface.typ)
 }
 

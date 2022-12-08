@@ -199,14 +199,20 @@ type funcval struct {
 	// variable-size, fn-specific data here
 }
 
+// 非空接口
 type iface struct {
-	tab  *itab
+	// 类型信息
+	tab *itab
+	// 指向原始数据的指针
 	data unsafe.Pointer
 }
 
+// 空接口
 type eface struct {
+	// 类型信息 src/runtime/type.go
 	_type *_type
-	data  unsafe.Pointer
+	// 数据信息，指向数据的指针
+	data unsafe.Pointer
 }
 
 func efaceOf(ep *any) *eface {
@@ -936,12 +942,19 @@ type funcinl struct {
 // allocated in non-garbage-collected memory
 // Needs to be in sync with
 // ../cmd/compile/internal/reflectdata/reflect.go:/^func.WriteTabs.
+//
+// 非空接口的类型信息
 type itab struct {
+	// 接口自身定义的类型信息, 用于定位到具体的interface类型（包、方法等）src/runtime/type.go
 	inter *interfacetype
+	// 接口实际指向值的类型信息
 	_type *_type
-	hash  uint32 // copy of _type.hash. Used for type switches.
-	_     [4]byte
-	fun   [1]uintptr // variable sized. fun[0]==0 means _type does not implement inter.
+	// _type.hash的拷贝，用于快速查询和判断目标类型和接口类型是否一致
+	hash uint32 // copy of _type.hash. Used for type switches.
+	_    [4]byte
+	// 动态数组，接口方法实现列表（方法集），即函数地址列表
+	// 如果数组中的内容为空表示 _type 没有实现 inter 接口
+	fun [1]uintptr // variable sized. fun[0]==0 means _type does not implement inter.
 }
 
 // Lock-free stack node.

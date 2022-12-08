@@ -38,10 +38,12 @@ import (
 // they represent.
 type Value struct {
 	// typ holds the type of the value represented by a Value.
+	// 值的类型
 	typ *rtype
 
 	// Pointer-valued data or, if flagIndir is set, pointer to data.
 	// Valid when either flagIndir is set or typ.pointers() is true.
+	// 指向数据的指针
 	ptr unsafe.Pointer
 
 	// flag holds metadata about the value.
@@ -58,6 +60,8 @@ type Value struct {
 	//
 	// The remaining 22+ bits give a method number for method values.
 	// If flag.kind() != Func, code can assume that flagMethod is unset.
+	//
+	// 指明值的类型，是否只读，ptr字段是否是指针等
 	flag
 
 	// A method value represents a curried method invocation

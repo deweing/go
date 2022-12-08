@@ -255,6 +255,7 @@ func (m *Mutex) Unlock() {
 	}
 
 	// Fast path: drop lock bit.
+	// 快速检查：解锁，判断如果没有等待的goroutine，直接返回
 	new := atomic.AddInt32(&m.state, -mutexLocked)
 	if new != 0 {
 		// Outlined slow path to allow inlining the fast path.
@@ -267,7 +268,7 @@ func (m *Mutex) unlockSlow(new int32) {
 	if (new+mutexLocked)&mutexLocked == 0 {
 		fatal("sync: unlock of unlocked mutex")
 	}
-	if new&mutexStarving == 0 { //正常模式
+	if new&mutexStarving == 0 { //非饥饿模式
 		old := new
 		for {
 			// If there are no waiters or a goroutine has already
