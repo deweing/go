@@ -69,6 +69,10 @@ type Context interface {
 	// Deadline returns the time when work done on behalf of this context
 	// should be canceled. Deadline returns ok==false when no deadline is
 	// set. Successive calls to Deadline return the same results.
+	//
+	// Deadline返回该上下文完成的最后时间
+	// ok == false 没有设置deadline
+	// 对Deadline的连续调用会返回相同的结果
 	Deadline() (deadline time.Time, ok bool)
 
 	// Done returns a channel that's closed when work done on behalf of this
@@ -102,6 +106,13 @@ type Context interface {
 	//
 	// See https://blog.golang.org/pipelines for more examples of how to use
 	// a Done channel for cancellation.
+	//
+	// Done方法返回一个channel,阻塞当前运行的代码，直到以下条件之一发生时，channel才会被关闭，进而解除阻塞
+	// 1.WithCancel创建的context，cancelFunc被调用，该context已经派生子context的Done channel都会收到取消信号；
+	// 2.WithDealine 创建的context，deadline到期
+	// 3.WithTimeout 创建的 context, timeout到期
+	//
+	// Done要配合select语句使用
 	Done() <-chan struct{}
 
 	// If Done is not yet closed, Err returns nil.
@@ -211,6 +222,15 @@ var (
 // values, and has no deadline. It is typically used by the main function,
 // initialization, and tests, and as the top-level Context for incoming
 // requests.
+//
+// 创建根Context
+// 有两种方法创建根Context:
+// 1.Context.Backgroud()
+// 2.Context.TODO()
+//
+// 根Context不会被cancel，这两个方法只能用在最外层代码中，比如main函数里面，
+// 一般使用Background()方法创建根
+// TODO()用于当前不确定使用何种context，留待以后调整
 func Background() Context {
 	return background
 }
