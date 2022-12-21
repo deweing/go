@@ -18,6 +18,8 @@ import (
 )
 
 // Central list of free objects of a given size.
+//
+// 中枢缓存
 type mcentral struct {
 	_         sys.NotInHeap
 	spanclass spanClass
@@ -40,8 +42,10 @@ type mcentral struct {
 	// to the appropriate swept list. As a result, the parts of the
 	// sweeper and mcentral that do consume from the unswept list may
 	// encounter swept spans, and these should be ignored.
+	// 部分包含对象的跨度列表
 	partial [2]spanSet // list of spans with a free object
-	full    [2]spanSet // list of spans with no free objects
+	// 已经存满对象的跨度列表
+	full [2]spanSet // list of spans with no free objects
 }
 
 // Initialize a single central free list.
@@ -107,7 +111,8 @@ func (c *mcentral) cacheSpan() *mspan {
 	var sl sweepLocker
 
 	// Try partial swept spans first.
-	sg := mheap_.sweepgen
+	sg := mheap_.sweepgen //GC相关的清理周期，用于确定某个mspan的清理状态
+	//尝试从mcentrl结构中获取mspan
 	if s = c.partialSwept(sg).pop(); s != nil {
 		goto havespan
 	}
@@ -163,6 +168,8 @@ func (c *mcentral) cacheSpan() *mspan {
 	}
 
 	// We failed to get a span from the mcentral so get one from mheap.
+	// 无法从mcentral获取span，说明堆上已无可用的mspan
+	// 执行增长
 	s = c.grow()
 	if s == nil {
 		return nil

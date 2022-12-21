@@ -228,6 +228,10 @@ func osinit_hack_trampoline()
 // splits, since this function (used by sysAlloc) is called in a lot of low-level
 // parts of the runtime and callers often assume it won't acquire any locks.
 //
+// mmap和mumap的功能是为进程的虚拟内存地址创建映射，并通过指定不同的保护模式（PORT）来辅助操作系统对用户空间内存使用情况的加速
+// 例如，使用mmap调用时，使用PORT_NONE进行预留的内存页还不能直接进行读写访问，
+// 而进一步使用 PORT_READ 和 PORT_WRITE 来支持对预留区域内层的读写
+//
 //go:nosplit
 func mmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uint32) (unsafe.Pointer, int) {
 	args := struct {

@@ -16,6 +16,9 @@ import (
 //
 // mcaches are allocated from non-GC'd memory, so any heap pointers
 // must be specially handled.
+//
+// 局部缓存mcache存储了线程局部的跨度缓存，它由P进程持有，是一个包含不同大小等级的跨度链表的数组
+// 其中 mcache.alloc 的每一个数组元素都是某一个特定大小的 mspan 的链表头指针
 type mcache struct {
 	_ sys.NotInHeap
 
@@ -42,8 +45,10 @@ type mcache struct {
 
 	// The rest is not accessed on every malloc.
 
+	// 变量分配缓存
 	alloc [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
 
+	// 执行栈分配缓存
 	stackcache [_NumStackOrders]stackfreelist
 
 	// flushGen indicates the sweepgen during which this mcache
@@ -156,6 +161,7 @@ func (c *mcache) refill(spc spanClass) {
 		if s.sweepgen != mheap_.sweepgen+3 {
 			throw("bad sweepgen in refill")
 		}
+		//将mcache中需要清理的mspan归还到mcentral
 		mheap_.central[spc].mcentral.uncacheSpan(s)
 
 		// Count up how many slots were used and record it.
@@ -179,6 +185,7 @@ func (c *mcache) refill(spc spanClass) {
 	}
 
 	// Get a new cached span from the central lists.
+	// 从mcentral获取更多新的可用的 mspan
 	s = mheap_.central[spc].mcentral.cacheSpan()
 	if s == nil {
 		throw("out of memory")
@@ -216,6 +223,8 @@ func (c *mcache) refill(spc spanClass) {
 }
 
 // allocLarge allocates a span for a large object.
+//
+// allocLarge为一个大型对象分配一个跨度
 func (c *mcache) allocLarge(size uintptr, noscan bool) *mspan {
 	if size+_PageSize < size {
 		throw("out of memory")
@@ -231,8 +240,10 @@ func (c *mcache) allocLarge(size uintptr, noscan bool) *mspan {
 	deductSweepCredit(npages*_PageSize, npages)
 
 	spc := makeSpanClass(0, noscan)
+	// 从堆上申请n个连续的页，并对内存进行清零
 	s := mheap_.alloc(npages, spc)
 	if s == nil {
+		//当无法从堆上分配内存时，说明已经用尽了所有内存
 		throw("out of memory")
 	}
 

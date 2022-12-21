@@ -852,8 +852,10 @@ func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bo
 			println("runtime: s.allocCount=", s.allocCount, "s.nelems=", s.nelems)
 			throw("s.allocCount != s.nelems && freeIndex == s.nelems")
 		}
+		//从mcentral填充mspan 到 mcache
 		c.refill(spc)
 		shouldhelpgc = true
+		// 获取一个填充后的mspan
 		s = c.alloc[spc]
 
 		freeIndex = s.nextFreeIndex()
@@ -875,11 +877,18 @@ func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bo
 // Allocate an object of size bytes.
 // Small objects are allocated from the per-P cache's free lists.
 // Large objects (> 32 kB) are allocated straight from the heap.
+//
+// mallocgc是对象分配器的核心入口
+// 作为理解整个对象分配器的起点，可以根据它的实现将对象分配的流程分为三种基本的情况
+// 1.微对象分配：针对大小16B的对象分配请求
+// 2.小对象分配：针对大小介于176B与32KB之间的分配请求
+// 3.大对象分配：针对大于32KB的对象分配请求
 func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	if gcphase == _GCmarktermination {
 		throw("mallocgc called with gcphase == _GCmarktermination")
 	}
 
+	//创建大小为零的对象，例如空结构体
 	if size == 0 {
 		return unsafe.Pointer(&zerobase)
 	}
@@ -943,6 +952,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 
 	shouldhelpgc := false
 	dataSize := userSize
+	//获取当前g所在M所绑定P得mcache
 	c := getMCache(mp)
 	if c == nil {
 		throw("mallocgc called without a P or outside bootstrapping")
@@ -954,7 +964,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	// be delayed till preemption is possible; delayedZeroing tracks that state.
 	delayedZeroing := false
 	if size <= maxSmallSize {
-		if noscan && size < maxTinySize {
+		if noscan && size < maxTinySize { //微对象分配(0,16B)
 			// Tiny allocator.
 			//
 			// Tiny allocator combines several tiny allocation requests
@@ -1003,6 +1013,8 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			}
 			if off+size <= maxTinySize && c.tiny != 0 {
 				// The object fits into existing tiny block.
+				// 微对象能够放到现有的微对象块中，此块在分配时已被标记
+				// 无需额外标记，可立刻结束分配流程
 				x = unsafe.Pointer(c.tiny + off)
 				c.tinyoffset = off + size
 				c.tinyAllocs++
@@ -1027,7 +1039,8 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 				c.tinyoffset = size
 			}
 			size = maxTinySize
-		} else {
+		} else { //小对象分配(16B, 32KB)
+			// 计算申请内存的对象所对应的大小等级，查表
 			var sizeclass uint8
 			if size <= smallSizeMax-8 {
 				sizeclass = size_to_class8[divRoundUp(size, smallSizeDiv)]
@@ -1036,25 +1049,26 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
-			span = c.alloc[spc]
-			v := nextFreeFast(span)
+			span = c.alloc[spc]     //从mcache中获得对应大小等级的mspan
+			v := nextFreeFast(span) //mspan还有剩余的空间，计算对象的起始地址，并直接使用
 			if v == 0 {
+				// 没有足够的mspan缓存，需要从下一级(mcentral)获取
 				v, span, shouldhelpgc = c.nextFree(spc)
 			}
 			x = unsafe.Pointer(v)
-			if needzero && span.needzero != 0 {
+			if needzero && span.needzero != 0 { //内存清零
 				memclrNoHeapPointers(x, size)
 			}
 		}
-	} else {
+	} else { //大对象分配(32KB, 无穷)
 		shouldhelpgc = true
 		// For large allocations, keep track of zeroed state so that
 		// bulk zeroing can be happen later in a preemptible context.
-		span = c.allocLarge(size, noscan)
+		span = c.allocLarge(size, noscan) //从堆上分配
 		span.freeindex = 1
 		span.allocCount = 1
 		size = span.elemsize
-		x = unsafe.Pointer(span.base())
+		x = unsafe.Pointer(span.base()) //获取对象存放的起始地址
 		if needzero && span.needzero != 0 {
 			if noscan {
 				delayedZeroing = true
@@ -1250,6 +1264,8 @@ func memclrNoHeapPointersChunked(size uintptr, x unsafe.Pointer) {
 // implementation of new builtin
 // compiler (both frontend and SSA backend) knows the signature
 // of this function.
+// 创建一个新的对象，对mallocgc的一层简单封装
+// _type为Go类型的实现，通过其size属性能够获得该类型所需要的大小
 func newobject(typ *_type) unsafe.Pointer {
 	return mallocgc(typ.size, typ, true)
 }

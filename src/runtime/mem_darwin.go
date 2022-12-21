@@ -48,6 +48,10 @@ func sysFaultOS(v unsafe.Pointer, n uintptr) {
 	mmap(v, n, _PROT_NONE, _MAP_ANON|_MAP_PRIVATE|_MAP_FIXED, -1, 0)
 }
 
+// 预留内存地址
+// 该函数会执行 mmap 系统调用，使用 PORT_NONE，并选择匿名、私有映射（Anonymous/private mapping）的方式 _MAP_ANON
+// 向操作系统申请预留虚拟地址空间，调用结束后预留地址所在的内存处于预留态，
+// 处于该状态的内存只用于提前想操作系统预告其可能的使用状态，不能对得到的内存进行安全的读写操作
 func sysReserveOS(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 	p, err := mmap(v, n, _PROT_NONE, _MAP_ANON|_MAP_PRIVATE, -1, 0)
 	if err != 0 {
@@ -58,6 +62,7 @@ func sysReserveOS(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 
 const _ENOMEM = 12
 
+// 该函数执行mmap系统调用，将保留好的内存进一步映射，将其转换为 PORT_READ 和 PORT_WRITE 可读写状态
 func sysMapOS(v unsafe.Pointer, n uintptr) {
 	p, err := mmap(v, n, _PROT_READ|_PROT_WRITE, _MAP_ANON|_MAP_FIXED|_MAP_PRIVATE, -1, 0)
 	if err == _ENOMEM {

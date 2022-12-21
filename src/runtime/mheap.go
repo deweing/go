@@ -58,6 +58,7 @@ const (
 //
 // mheap must not be heap-allocated because it contains mSpanLists,
 // which must not be heap-allocated.
+// mheap结构存储了整个go堆的管理状态
 type mheap struct {
 	_ sys.NotInHeap
 
@@ -402,6 +403,9 @@ type mSpanList struct {
 	last  *mspan // last span in list, or nil if none
 }
 
+// 所有的堆都可以通过跨度按照预先设定好的大小等级分别分配
+// 跨度的结构由mspan进行描述，它由一连串页组成，也是管理Go堆内存单元的基本大小。
+// 每个跨度事故相同大小等级的跨度的双向链表的一个节点，每个节点还记录了自己的起始地址、指向跨度所包含的页的数量等
 type mspan struct {
 	_    sys.NotInHeap
 	next *mspan     // next span in list, or nil if none
@@ -1179,21 +1183,24 @@ func (h *mheap) allocSpan(npages uintptr, typ spanAllocType, spanclass spanClass
 	// If the allocation is small enough, try the page cache!
 	// The page cache does not support aligned allocations, so we cannot use
 	// it if we need to provide a physical page aligned stack allocation.
+	// 存在关联的P，尝试从局部的页缓存中获取页并分配跨度
 	pp := gp.m.p.ptr()
 	if !needPhysPageAlign && pp != nil && npages < pageCachePages/4 {
 		c := &pp.pcache
 
 		// If the cache is empty, refill it.
+		// 如果缓存空，则进行填充
 		if c.empty() {
 			lock(&h.lock)
-			*c = h.pages.allocToCache()
+			*c = h.pages.allocToCache() //从全局页分配器填充页缓存
 			unlock(&h.lock)
 		}
 
 		// Try to allocate from the cache.
+		// 从页缓存中分配所需的页
 		base, scav = c.alloc(npages)
 		if base != 0 {
-			s = h.tryAllocMSpan()
+			s = h.tryAllocMSpan() //从分配的页中构造跨度
 			if s != nil {
 				goto HaveSpan
 			}
@@ -1237,13 +1244,14 @@ func (h *mheap) allocSpan(npages uintptr, typ spanAllocType, spanclass spanClass
 
 	if base == 0 {
 		// Try to acquire a base address.
+		// 从页分配器分配地址
 		base, scav = h.pages.alloc(npages)
 		if base == 0 {
 			var ok bool
-			growth, ok = h.grow(npages)
+			growth, ok = h.grow(npages) //并在分配失败时进行堆增长
 			if !ok {
 				unlock(&h.lock)
-				return nil
+				return nil //如果无法增长堆页不再需要构造跨度了，直接宣告失败
 			}
 			base, scav = h.pages.alloc(npages)
 			if base == 0 {
