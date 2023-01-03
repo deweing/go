@@ -13,9 +13,9 @@ import (
 )
 
 type slice struct {
-	array unsafe.Pointer
-	len   int
-	cap   int
+	array unsafe.Pointer //底层数组
+	len   int            //长度
+	cap   int            //容量
 }
 
 // A notInHeapSlice is a slice backed by runtime/internal/sys.NotInHeap memory.

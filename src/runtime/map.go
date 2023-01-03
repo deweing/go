@@ -123,6 +123,7 @@ func isEmpty(x uint8) bool {
 type hmap struct {
 	// Note: the format of the hmap is also encoded in cmd/compile/internal/reflectdata/reflect.go.
 	// Make sure this stays in sync with the compiler's definition.
+	//元素个数，len()直接返回此值
 	count int // # live cells == size of map.  Must be first (used by len() builtin)
 	flags uint8
 	//桶的对数
