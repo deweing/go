@@ -39,25 +39,27 @@ type _type struct {
 	ptrdata uintptr // size of memory prefix holding all pointers
 	// 类型hash值，避免在哈希表中计算
 	hash uint32
-	// 类型flag，和反射相关
+	// 标记位，主要用于反射
 	tflag tflag
-	// 该类型变量对齐方式
+	// 对齐字节信息
 	align uint8
-	// 该类型结构字段对齐方式
+	// 当前结构字段的对齐字节数
 	fieldAlign uint8
-	// 类型编号 src/runtime/typeKind.go
+	// 基础类型枚举值 src/runtime/typeKind.go
 	kind uint8
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
+	// 比较两个形参对应对象的类型是否相等
 	equal func(unsafe.Pointer, unsafe.Pointer) bool
 	// gcdata stores the GC type data for the garbage collector.
 	// If the KindGCProg bit is set in kind, gcdata is a GC program.
 	// Otherwise it is a ptrmask bitmap. See mbitmap.go for details.
 	//
-	// gc数据
+	// gc类型的数据
 	gcdata *byte
-	// 类型名字的偏移
-	str       nameOff
+	// 类型名称字符串在二进制文件段中的偏移量
+	str nameOff
+	// 类型元信息指针在二进制文件段中的偏移量
 	ptrToThis typeOff
 }
 
@@ -362,7 +364,9 @@ type imethod struct {
 
 // 非空接口类型，接口定义、包路径、方法
 type interfacetype struct {
-	typ     _type
+	// 类型元信息
+	typ _type
+	// 包路径和描述信息等的
 	pkgpath name
 	// 接口方法声明列表，按字典序排序
 	mhdr []imethod

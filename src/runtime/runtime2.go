@@ -199,11 +199,11 @@ type funcval struct {
 	// variable-size, fn-specific data here
 }
 
-// 非空接口
+// 非空interface
 type iface struct {
-	// 类型信息
+	// 存放类型、方法等信息
 	tab *itab
-	// 指向原始数据的指针
+	// 指向的iface绑定对象的原始数据的指针
 	data unsafe.Pointer
 }
 
@@ -1010,15 +1010,15 @@ type funcinl struct {
 //
 // 非空接口的类型信息
 type itab struct {
-	// 接口自身定义的类型信息, 用于定位到具体的interface类型（包、方法等）src/runtime/type.go
+	// 是interface直接静态类型（src/runtime/type.go）
 	inter *interfacetype
-	// 接口实际指向值的类型信息
+	// 是interface对应具体对象的类型
 	_type *_type
-	// _type.hash的拷贝，用于快速查询和判断目标类型和接口类型是否一致
+	// 这里的hash字段和_type里面hash字段完全一致，目的是为了类型断言
 	hash uint32 // copy of _type.hash. Used for type switches.
 	_    [4]byte
-	// 动态数组，接口方法实现列表（方法集），即函数地址列表
-	// 如果数组中的内容为空表示 _type 没有实现 inter 接口
+	// 函数指针，指向具体类型的方法。
+	// 这里存储的是第一个方法的函数指针，如果有更多的方法，在它之后的内存空间继续存储
 	fun [1]uintptr // variable sized. fun[0]==0 means _type does not implement inter.
 }
 
