@@ -133,7 +133,7 @@ func (p *Pool) Put(x any) {
 		race.ReleaseMerge(poolRaceAddr(x))
 		race.Disable()
 	}
-	// G-M 锁定
+	// G-M 锁定，禁用抢占；获取对应的 poolLocal(poolLocalInternal)对象
 	l, _ := p.pin()
 	if l.private == nil {
 		// 尝试放到最快的位置
@@ -142,6 +142,7 @@ func (p *Pool) Put(x any) {
 		// 放到双向链表中
 		l.shared.pushHead(x)
 	}
+	// 解锁
 	runtime_procUnpin()
 	if race.Enabled {
 		race.Enable()
@@ -181,7 +182,7 @@ func (p *Pool) Get() any {
 		// Try to pop the head of the local shard. We prefer
 		// the head over the tail for temporal locality of
 		// reuse.
-		// 从shared队列里获取
+		// 从本地shared队列里获取
 		x, _ = l.shared.popHead()
 		if x == nil {
 			//尝试从其他P的队列获取，或者尝试从 victim cache 里面获取
@@ -209,6 +210,7 @@ func (p *Pool) getSlow(pid int) any {
 	size := runtime_LoadAcquintptr(&p.localSize) // load-acquire
 	locals := p.local                            // load-consume
 	// Try to steal one element from other procs.
+	// 遍历其他P对应的数据桶（双向链表+环型队列），从队尾尝试获取对象
 	for i := 0; i < int(size); i++ {
 		l := indexLocal(locals, (pid+i+1)%int(size))
 		if x, _ := l.shared.popTail(); x != nil {
@@ -219,6 +221,7 @@ func (p *Pool) getSlow(pid int) any {
 	// Try the victim cache. We do this after attempting to steal
 	// from all primary caches because we want objects in the
 	// victim cache to age out if at all possible.
+	// 尝试从victim cache 中获取对象
 	size = atomic.LoadUintptr(&p.victimSize)
 	if uintptr(pid) >= size {
 		return nil
@@ -238,6 +241,7 @@ func (p *Pool) getSlow(pid int) any {
 
 	// Mark the victim cache as empty for future gets don't bother
 	// with it.
+	// 如果没有找到对象，则清空victim cache
 	atomic.StoreUintptr(&p.victimSize, 0)
 
 	return nil
@@ -271,12 +275,13 @@ func (p *Pool) pinSlow() (*poolLocal, int) {
 	// Can not lock the mutex while pinned.
 	// G-M 先解锁
 	runtime_procUnpin()
-	// 以下逻辑在全局锁 allPoolsMu 内
+	// 全局锁 allPoolsMu，控制了只有一个 PG 能够执行初始化逻辑
 	allPoolsMu.Lock()
 	defer allPoolsMu.Unlock()
 	// 获取当前 G-M-P ，P 的 id
 	pid := runtime_procPin()
 	// poolCleanup won't be called while we are pinned.
+	// runtime_procPin() 后不会发生 GC，所以获取当前的localSize和local值
 	s := p.localSize
 	l := p.local
 	if uintptr(pid) < s {
@@ -322,20 +327,23 @@ func poolCleanup() {
 
 	// The pools with non-empty primary caches now have non-empty
 	// victim caches and no pools have primary caches.
-	// 清理 allPools
+	// 清理 allPools 和 oldPools 中所有的 Pool 实例
 	oldPools, allPools = allPools, nil
 }
 
 var (
+	// 全局锁
 	allPoolsMu Mutex
 
 	// allPools is the set of pools that have non-empty primary
 	// caches. Protected by either 1) allPoolsMu and pinning or 2)
 	// STW.
+	// 存放程序运行期间所有的 Pool 实例地址
 	allPools []*Pool
 
 	// oldPools is the set of pools that may have non-empty victim
 	// caches. Protected by STW.
+	// 配合 victim 机制用的
 	oldPools []*Pool
 )
 
