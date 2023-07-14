@@ -61,6 +61,9 @@ type MemStats struct {
 	// Alloc is bytes of allocated heap objects.
 	//
 	// This is the same as HeapAlloc (see below).
+	//
+	// 已分配的对象的字节数
+	// 这个和HeapAlloc是一样的
 	Alloc uint64
 
 	// TotalAlloc is cumulative bytes allocated for heap objects.
@@ -68,6 +71,9 @@ type MemStats struct {
 	// TotalAlloc increases as heap objects are allocated, but
 	// unlike Alloc and HeapAlloc, it does not decrease when
 	// objects are freed.
+	//
+	// 分配的字节数累计之和
+	// TotalAlloc会随着分配的对象增加而增加，但是不会随着对象的释放而减少
 	TotalAlloc uint64
 
 	// Sys is the total bytes of memory obtained from the OS.
@@ -78,19 +84,30 @@ type MemStats struct {
 	// likely that not all of the virtual address space is backed
 	// by physical memory at any given moment, though in general
 	// it all was at some point.
+	//
+	// 从操作系统中获取的内存总数
+	// Sys是下面XSys字段的值的总和，是为堆、栈和其他内部数据结构保留的虚拟地址空间
+	// 注意虚拟内存空间和物理内存的区别
 	Sys uint64
 
 	// Lookups is the number of pointer lookups performed by the
 	// runtime.
 	//
 	// This is primarily useful for debugging runtime internals.
+	//
+	// 运行时地址查找的次数，主要用在运行时内部调试上
 	Lookups uint64
 
 	// Mallocs is the cumulative count of heap objects allocated.
 	// The number of live objects is Mallocs - Frees.
+	//
+	// 堆对象分配的累计次数
+	// 活跃对象的数量是Mallocs - Frees
 	Mallocs uint64
 
 	// Frees is the cumulative count of heap objects freed.
+	//
+	// 释放的对象数
 	Frees uint64
 
 	// Heap memory statistics.
@@ -125,6 +142,11 @@ type MemStats struct {
 	// occur simultaneously, and as a result HeapAlloc tends to
 	// change smoothly (in contrast with the sawtooth that is
 	// typical of stop-the-world garbage collectors).
+	//
+	// 分配的堆对象的字节数
+	//
+	// 包括所有可访问的对象以及还未被垃圾回收的不可访问的对象.
+	// 所以这个值是变化的，分配对象时会增加，垃圾回收对象时会减少.
 	HeapAlloc uint64
 
 	// HeapSys is bytes of heap memory obtained from the OS.
@@ -138,6 +160,11 @@ type MemStats struct {
 	// for a measure of the latter).
 	//
 	// HeapSys estimates the largest size the heap has had.
+	//
+	// 从操作系统中获取的堆内存大小
+	//
+	// 虚拟内存空间为堆保留的大小，包括还没有被使用的.
+	// HeapSys 可被估算为堆已有的最大尺寸.
 	HeapSys uint64
 
 	// HeapIdle is bytes in idle (unused) spans.
@@ -153,6 +180,16 @@ type MemStats struct {
 	// memory from the OS. If this difference is significantly
 	// larger than the heap size, it indicates there was a recent
 	// transient spike in live heap size.
+	//
+	// HeapIdle是idle(未被使用的)span中的字节数
+	//
+	// idle span 是指没有任何对象的span，这些span可以返还给操作系统，或者它们可以被重用
+	// 或者它们可以用作栈内存
+	//
+	// HeapIdle减去HeapReleased的值可以当作“可以返回到操作系统但有运行时保留的内存量”。
+	// 以便在不向操作系统请求更多内存的情况下增加堆，也就是运行时的“小金库”
+	//
+	// 如果这个差值明显比堆的大小大很多，说明最近在活动堆上有一次尖峰
 	HeapIdle uint64
 
 	// HeapInuse is bytes in in-use spans.
@@ -166,12 +203,21 @@ type MemStats struct {
 	// not currently being used. This is an upper bound on
 	// fragmentation, but in general this memory can be reused
 	// efficiently.
+	//
+	// 正在使用的span的字节大小
+	//
+	// 正在使用的span时指它至少包含一个对象在其中
+	// HeapInuse减去HeapAlloc的值可以当作“已经分配给特定大小类的内存量，但目前没有使用”
 	HeapInuse uint64
 
 	// HeapReleased is bytes of physical memory returned to the OS.
 	//
 	// This counts heap memory from idle spans that was returned
 	// to the OS and has not yet been reacquired for the heap.
+	//
+	// HeapReleased是返回给操作系统的物理内存的字节数
+	//
+	// 它统计了从idle span中返还给操作系统，没有被重新获取的内存大小.
 	HeapReleased uint64
 
 	// HeapObjects is the number of allocated heap objects.
@@ -179,6 +225,8 @@ type MemStats struct {
 	// Like HeapAlloc, this increases as objects are allocated and
 	// decreases as the heap is swept and unreachable objects are
 	// freed.
+	//
+	// HeapObjects 实时统计的分配的堆对象的数量,类似HeapAlloc.
 	HeapObjects uint64
 
 	// Stack memory statistics.
@@ -194,12 +242,20 @@ type MemStats struct {
 	//
 	// There is no StackIdle because unused stack spans are
 	// returned to the heap (and hence counted toward HeapIdle).
+	//
+	// 栈span使用的字节数。
+	// 正在使用的栈span是指至少有一个栈在其中.
+	//
+	//  注意并没有idle的栈span,因为未使用的栈span会被返还给堆(HeapIdle).
 	StackInuse uint64
 
 	// StackSys is bytes of stack memory obtained from the OS.
 	//
 	// StackSys is StackInuse, plus any memory obtained directly
 	// from the OS for OS thread stacks (which should be minimal).
+	//
+	// 从操作系统取得的栈内存大小.
+	// 等于StackInuse 再加上为操作系统线程栈获得的内存.
 	StackSys uint64
 
 	// Off-heap memory statistics.
@@ -214,27 +270,41 @@ type MemStats struct {
 	// overheads.
 
 	// MSpanInuse is bytes of allocated mspan structures.
+	//
+	// 分配的mspan数据结构的字节数.
 	MSpanInuse uint64
 
 	// MSpanSys is bytes of memory obtained from the OS for mspan
 	// structures.
+	//
+	// 从操作系统为mspan获取的内存字节数.
 	MSpanSys uint64
 
 	// MCacheInuse is bytes of allocated mcache structures.
+	//
+	// 分配的mcache数据结构的字节数.
 	MCacheInuse uint64
 
 	// MCacheSys is bytes of memory obtained from the OS for
 	// mcache structures.
+	//
+	// 从操作系统为mcache获取的内存字节数.
 	MCacheSys uint64
 
 	// BuckHashSys is bytes of memory in profiling bucket hash tables.
+	//
+	// 在profiling bucket hash tables中的内存字节数.
 	BuckHashSys uint64
 
 	// GCSys is bytes of memory in garbage collection metadata.
+	//
+	// 垃圾回收元数据使用的内存字节数.
 	GCSys uint64
 
 	// OtherSys is bytes of memory in miscellaneous off-heap
 	// runtime allocations.
+	//
+	// off-heap的杂项内存字节数.
 	OtherSys uint64
 
 	// Garbage collector statistics.
@@ -245,10 +315,15 @@ type MemStats struct {
 	// At the end of each GC cycle, the target for the next cycle
 	// is computed based on the amount of reachable data and the
 	// value of GOGC.
+	//
+	// 下一次垃圾回收的目标大小，保证 HeapAlloc ≤ NextGC.
+	// 基于当前可访问的数据和GOGC的值计算而得.
 	NextGC uint64
 
 	// LastGC is the time the last garbage collection finished, as
 	// nanoseconds since 1970 (the UNIX epoch).
+	//
+	// 上一次垃圾回收的时间.
 	LastGC uint64
 
 	// PauseTotalNs is the cumulative nanoseconds in GC
@@ -256,6 +331,9 @@ type MemStats struct {
 	//
 	// During a stop-the-world pause, all goroutines are paused
 	// and only the garbage collector can run.
+	//
+	// 自程序开始 STW 暂停的累积纳秒数.
+	// STW的时候除了垃圾回收器之外所有的goroutine都会暂停.
 	PauseTotalNs uint64
 
 	// PauseNs is a circular buffer of recent GC stop-the-world
@@ -265,6 +343,8 @@ type MemStats struct {
 	// general, PauseNs[N%256] records the time paused in the most
 	// recent N%256th GC cycle. There may be multiple pauses per
 	// GC cycle; this is the sum of all pauses during a cycle.
+	//
+	//  一个循环buffer，用来记录最近的256个GC STW的暂停时间.
 	PauseNs [256]uint64
 
 	// PauseEnd is a circular buffer of recent GC pause end times,
@@ -273,13 +353,19 @@ type MemStats struct {
 	// This buffer is filled the same way as PauseNs. There may be
 	// multiple pauses per GC cycle; this records the end of the
 	// last pause in a cycle.
+	//
+	// 最近256个GC暂停截止的时间.
 	PauseEnd [256]uint64
 
 	// NumGC is the number of completed GC cycles.
+	//
+	// GC的总次数.
 	NumGC uint32
 
 	// NumForcedGC is the number of GC cycles that were forced by
 	// the application calling the GC function.
+	//
+	// 强制GC的次数.
 	NumForcedGC uint32
 
 	// GCCPUFraction is the fraction of this program's available
@@ -295,10 +381,15 @@ type MemStats struct {
 	//
 	// This is the same as the fraction of CPU reported by
 	// GODEBUG=gctrace=1.
+	//
+	// 自程序启动后由GC占用的CPU可用时间，数值在 0 到 1 之间.
+	// 0代表GC没有消耗程序的CPU. GOMAXPROCS * 程序运行时间等于程序的CPU可用时间.
 	GCCPUFraction float64
 
 	// EnableGC indicates that GC is enabled. It is always true,
 	// even if GOGC=off.
+	//
+	// 是否允许GC.
 	EnableGC bool
 
 	// DebugGC is currently unused.
@@ -310,6 +401,8 @@ type MemStats struct {
 	// BySize[N-1].Size < S ≤ BySize[N].Size.
 	//
 	// This does not report allocations larger than BySize[60].Size.
+	//
+	// 按照大小进行的内存分配的统计,具体可以看Go内存分配的文章介绍.
 	BySize [61]struct {
 		// Size is the maximum byte size of an object in this
 		// size class.
