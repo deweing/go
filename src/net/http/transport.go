@@ -1358,6 +1358,7 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (pc *persi
 	}()
 
 	// Queue for idle connection.
+	// 第一步：查看idleConn中是否有可用的连接，如果有，直接返回；如果没有，当前w会被放入idleConnWait队列中
 	if delivered := t.queueForIdleConn(w); delivered {
 		pc := w.pc
 		// Trace only for HTTP/1.
@@ -1376,6 +1377,8 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (pc *persi
 	t.setReqCanceler(treq.cancelKey, func(err error) { cancelc <- err })
 
 	// Queue for permission to dial.
+	// 如果没有闲置的连接，则会尝试创建新的连接
+	// 注意：这里是异步创建的，这意味着当前请求有可能提前从另一个闲置的连接中拿到请求，这取决于哪一个更快
 	t.queueForDial(w)
 
 	// Wait for completion or cancellation.

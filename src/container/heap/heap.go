@@ -40,7 +40,8 @@ type Interface interface {
 // The complexity is O(n) where n = h.Len().
 func Init(h Interface) {
 	// heapify
-	n := h.Len()
+	n := h.Len() // 获取堆的长度
+	// 从长度的一半开始，一直到第0个元素，每个位置调用down方法（下层），形成一个堆
 	for i := n/2 - 1; i >= 0; i-- {
 		down(h, i, n)
 	}
@@ -49,7 +50,9 @@ func Init(h Interface) {
 // Push pushes the element x onto the heap.
 // The complexity is O(log n) where n = h.Len().
 func Push(h Interface, x any) {
+	// 将x添加到堆的最后一个位置
 	h.Push(x)
+	// 然后调用up方法（上层），将x往上调整
 	up(h, h.Len()-1)
 }
 
@@ -58,14 +61,18 @@ func Push(h Interface, x any) {
 // Pop is equivalent to Remove(h, 0).
 func Pop(h Interface) any {
 	n := h.Len() - 1
+	// 将堆的第0个元素和最后一个元素交换位置
 	h.Swap(0, n)
+	// 然后调用down方法（下层），将第0个元素往下调整，重新保证堆的性质
 	down(h, 0, n)
+	// 最后将最后一个元素移除
 	return h.Pop()
 }
 
 // Remove removes and returns the element at index i from the heap.
 // The complexity is O(log n) where n = h.Len().
 func Remove(h Interface, i int) any {
+	// pop只是remove的特殊情况，remove是把i位置的节点和最后一个节点进行交换，之后保证从i节点往下及往上都保证堆结构，最后把最后一个节点的数据丢出并返回
 	n := h.Len() - 1
 	if n != i {
 		h.Swap(i, n)
@@ -81,38 +88,50 @@ func Remove(h Interface, i int) any {
 // but less expensive than, calling Remove(h, i) followed by a Push of the new value.
 // The complexity is O(log n) where n = h.Len().
 func Fix(h Interface, i int) {
+	// i节点的数值发生改变后，需要保证堆的再平衡，先调用down保证该节点下面的堆结构，
+	// 如果有位置交换，则需要保证该节点往上的堆结构，否则就不需要往上保证堆结构，一个小小的优化
 	if !down(h, i, h.Len()) {
 		up(h, i)
 	}
 }
 
 func up(h Interface, j int) {
-	for {
+	for { // 循环，直到j位置的元素不再比父节点小
+		// 计算父节点位置
 		i := (j - 1) / 2 // parent
+		// 如果越界或者j位置的元素不比父节点小，那么就不需要再往上调整了
 		if i == j || !h.Less(j, i) {
 			break
 		}
+		// 否则，交换j和i节点的值，然后j赋值为i，继续往上调整
 		h.Swap(i, j)
 		j = i
 	}
 }
 
 func down(h Interface, i0, n int) bool {
-	i := i0
+	i := i0 // 中间变量，第一次存储的是需要保证往下需要形成堆的节点位置
 	for {
-		j1 := 2*i + 1
-		if j1 >= n || j1 < 0 { // j1 < 0 after int overflow
+		j1 := 2*i + 1          // i节点的左子节点
+		if j1 >= n || j1 < 0 { // j1 < 0 after int overflow 保证在子节点不越界
 			break
 		}
-		j := j1 // left child
+		j := j1 // left child 中间变量，j先赋值为左子节点
 		if j2 := j1 + 1; j2 < n && h.Less(j2, j1) {
 			j = j2 // = 2*i + 2  // right child
 		}
+		// 这之后，j被赋值为两个子节点中较小的那个，由less方法决定
+
+		// 如果i节点比两个子节点都小，那么就不需要再往下调整了
 		if !h.Less(j, i) {
 			break
 		}
+		// 否则，交换i和j节点的值，然后i赋值为j，继续往下调整
 		h.Swap(i, j)
 		i = j
 	}
+
+	// 这个返回值的作用就是用来判断i0位置的元素是否发生了变化
+	// 如果i0位置的元素发生了变化，那么就需要保证i0位置的元素往下调整
 	return i > i0
 }
